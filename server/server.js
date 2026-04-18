@@ -15,7 +15,13 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 // Middleware
-app.use(cors());
+app.use(cors(
+    {
+        origin: ['https://sc.sawinest.xyz', 'http://localhost:5173'], // Only this domain can access
+        methods: 'GET,POST',
+        optionsSuccessStatus: 200
+    }
+));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // Important for form data
 
@@ -31,5 +37,5 @@ app.get('/', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-    console.log(`Server is listening on port ${PORT}`);
+    console.log(`Server is listening on portt ${PORT}`);
 });
