@@ -16,39 +16,62 @@ const ChatInput = ({ onSendMessage }) => {
         }
     };
 
-    const handleSend = async () => {
+    const handleSend = async (e) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        
         if (!image || isSendingRef.current) return;
 
         isSendingRef.current = true;
-
+        const imageToSend = image; // Take a snapshot and clear local state immediately
         setIsLocating(true);
         
+        let hasProcessed = false; // Ensures onSendMessage is strictly called once
+        let fallbackStarted = false; // Protects against browser firing multiple error callbacks
+
         const sendWithFallback = async () => {
+            if (fallbackStarted) return;
+            fallbackStarted = true;
+
             try {
-                // Fallback to IP-based location if browser geolocation fails (common in Linux/Chromium)
+                // Fallback to IP-based location if browser geolocation fails
                 const response = await fetch('https://ipapi.co/json/');
                 const data = await response.json();
                 if (data && data.latitude && data.longitude) {
-                    onSendMessage(image, { lat: data.latitude, lon: data.longitude });
+                    if (!hasProcessed) {
+                        hasProcessed = true;
+                        onSendMessage(imageToSend, { lat: data.latitude, lon: data.longitude });
+                        resetInput();
+                    }
                 } else {
-                    onSendMessage(image, null);
+                    if (!hasProcessed) {
+                        hasProcessed = true;
+                        onSendMessage(imageToSend, null);
+                        resetInput();
+                    }
                 }
             } catch (fallbackError) {
                 console.error("Fallback location also failed", fallbackError);
-                onSendMessage(image, null);
-            } finally {
-                resetInput();
+                if (!hasProcessed) {
+                    hasProcessed = true;
+                    onSendMessage(imageToSend, null);
+                    resetInput();
+                }
             }
         };
 
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
+                    if (hasProcessed) return;
+                    hasProcessed = true;
                     const coordinates = {
                         lat: position.coords.latitude,
                         lon: position.coords.longitude
                     };
-                    onSendMessage(image, coordinates);
+                    onSendMessage(imageToSend, coordinates);
                     resetInput();
                 },
                 (error) => {
@@ -105,8 +128,15 @@ const ChatInput = ({ onSendMessage }) => {
                 </label>
 
                 <button
+                    type="button"
                     onClick={handleSend}
                     disabled={!image || isLocating}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSend(e);
+                        }
+                    }}
                     className={`ml-auto px-4 py-2 rounded-full font-medium ${!image || isLocating ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                 >
                     {isLocating ? 'Sending...' : 'Send'}

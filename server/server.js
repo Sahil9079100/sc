@@ -5,7 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import uploadRoutes from './routes/upload.routes.js';
-
+import { initializeWhatsAppClient } from './services/whatsapp.service.js';
+ 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,8 +26,9 @@ app.use(cors(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // Important for form data
 
-// Expose the user_img folder so frontend can load it
-app.use('/user_img', express.static(path.join(__dirname, 'user_img')));
+// Expose the user_img folders so frontend can load it
+app.use('/user_img_web', express.static(path.join(__dirname, 'user_img_web')));
+app.use('/user_img_whatsapp', express.static(path.join(__dirname, 'user_img_whatsapp')));
 
 // Routes
 app.use('/api', uploadRoutes);
@@ -37,5 +39,9 @@ app.get('/', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-    console.log(`Server is listening on portt ${PORT}`);
+    console.log(`Server is listening on port ${PORT}`);
+    
+    // Initialize WhatsApp Bot as soon as server starts
+    // NOTE: This will log a QR code to your terminal that you must scan.
+    initializeWhatsAppClient();
 });

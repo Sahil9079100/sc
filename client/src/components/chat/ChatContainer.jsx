@@ -52,16 +52,17 @@ const ChatContainer = () => {
           )
         );
 
-        // Simulate a bot response (optional, just for chat feel)
-        setTimeout(() => {
+        // Add the intelligent AI response as a bot message instantly
+        if (result.ai_response) {
             setMessages((prev) => [...prev, {
                 message_id: Date.now().toString(),
                 sender: 'bot',
                 type: 'text',
-                text: 'Image received and saved successfully! Analyzing crop conditions...',
+                text: result.ai_response,
                 timestamp: new Date().toISOString()
             }]);
-        }, 1000);
+        }
+        
       } else {
         console.error('Upload failed:', result.error);
         alert('Failed to upload image.');

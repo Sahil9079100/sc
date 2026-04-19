@@ -1,10 +1,12 @@
-export const handleImageUpload = (req, res) => {
+import { processMessage } from '../services/agent.service.js';
+
+export const handleImageUpload = async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'No image uploaded' });
         }
 
-        const { source, coordinates: rawCoordinates } = req.body;
+        const { source, coordinates: rawCoordinates, sessionId = 'web_guest_user' } = req.body;
         let coordinates = null;
 
         // since it might be stringified from multipart/form-data
@@ -16,9 +18,23 @@ export const handleImageUpload = (req, res) => {
             }
         }
 
-        const fileUrl = `/user_img/${req.file.filename}`;
+        const fileUrl = `/user_img_web/${req.file.filename}`;
 
-        // Creating response mimicking chat payload behavior
+        console.log(JSON.stringify({
+            source: source || 'web',
+            image_url: fileUrl,
+            coordinates: coordinates
+        }));
+
+        // Run the agent process for the Web user
+        const aiResult = await processMessage({
+            sessionId: sessionId,
+            source: source || 'web',
+            imageUrl: fileUrl,
+            coordinates: coordinates
+        });
+
+        // Creating response mimicking chat payload behavior (including the AI's intelligent text)
         const responsePayload = {
             success: true,
             data: {
@@ -29,12 +45,14 @@ export const handleImageUpload = (req, res) => {
                 coordinates: coordinates,
                 timestamp: new Date().toISOString()
             },
-            message: 'Image successfully uploaded for chat'
+            message: 'Image successfully uploaded for chat',
+            ai_response: aiResult.text,
+            diagnostic: aiResult.diagnosticResult
         };
 
         res.status(200).json(responsePayload);
     } catch (error) {
         console.error('Upload Error:', error);
-        res.status(500).json({ error: 'Failed to upload image' });
+        res.status(500).json({ error: 'Failed to process upload' });
     }
 };

@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Ensure user_img directory exists
-const targetDir = path.join(__dirname, '..', 'user_img');
+const targetDir = path.join(__dirname, '..', 'user_img_web');
 if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
 }
@@ -19,7 +19,7 @@ const storage = multer.diskStorage({
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const ext = path.extname(file.originalname);
-        cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+        cb(null, 'web-' + file.fieldname + '-' + uniqueSuffix + ext);
     }
 });
 
