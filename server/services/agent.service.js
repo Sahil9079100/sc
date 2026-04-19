@@ -3,6 +3,9 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+import { getWeatherData } from './weather.service.js';
+import { getMockSatelliteData } from './satellite.service.js';
+
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY.trim());
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
@@ -16,7 +19,10 @@ export const getSession = (sessionId) => {
             status: 'gathering_info',
             image_url: null,
             coordinates: null,
+            language: 'en', // Default language
             history: [], // Stores { role: 'user' | 'model', content: '...' }
+            diagnostic_data: null,
+            question_count: 0
         });
     }
     return sessions.get(sessionId);
@@ -31,54 +37,94 @@ export const updateSession = (sessionId, updates) => {
 // Mock Phase 2: Parallel Data Processing (Vision + Geo-Spatial)
 const runDiagnosticEngine = async (imageUrl, coordinates) => {
     console.log(`[Diagnostic Engine] Running visual inference on ${imageUrl}...`);
-    console.log(`[Diagnostic Engine] Fetching weather/soil data for ${coordinates.lat}, ${coordinates.lon}...`);
+    
+    // TRACK B: GEO-SPATIAL CONTEXT PIPELINE
+    console.log(`[Diagnostic Engine] Fetching real weather data for ${coordinates.lat}, ${coordinates.lon}...`);
+    const weatherData = await getWeatherData(coordinates.lat, coordinates.lon);
+    
+    console.log(`[Diagnostic Engine] Generating realistic mock satellite/soil data...`);
+    const satelliteData = await getMockSatelliteData(coordinates.lat, coordinates.lon, weatherData);
+    
+    const geoSpatialData = {
+        weather: weatherData,
+        soil_satellite_mock: satelliteData
+    };
 
-    // Simulate delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log(`[Diagnostic Engine] Geo-Spatial Pipeline completed:`, geoSpatialData);
+
+    // Mock representation of Track A (Vision) until real ResNet is integrated
+    const visualMock = {
+        suspected_disease: 'Leaf Blight (89% confidence)',
+        visual_cues: 'Yellowing margins and necrotic spots.'
+    };
 
     return {
-        suspected_disease: 'Leaf Blight (89% confidence)',
-        environmental_risk: 'High humidity detected (85%), favorable for fungal growth.',
+        visual_diagnosis: visualMock,
+        geo_spatial_data: geoSpatialData,
         raw_data: { image: imageUrl, loc: coordinates }
     };
 };
 
-export const processMessage = async ({ sessionId, source, text = '', imageUrl = null, coordinates = null }) => {
+export const processMessage = async ({ sessionId, source, text = '', imageUrl = null, coordinates = null, language = null }) => {
     const session = getSession(sessionId);
 
     // 1. Update State (Slot Filling)
     if (imageUrl) session.image_url = imageUrl;
     if (coordinates) session.coordinates = coordinates;
+    if (language) session.language = language; // Track user language if Deepgram detected it
+
+    let systemPromptAddition = '';
+    let isConfidenceEval = false;
 
     // 2. Check if we should trigger the diagnostic (Both slots filled)
-    let diagnosticResult = null;
-    let systemPromptAddition = '';
-
     if (session.image_url && session.coordinates && session.status !== 'completed') {
-        session.status = 'running_diagnostic';
-        diagnosticResult = await runDiagnosticEngine(session.image_url, session.coordinates);
-        session.status = 'completed';
+        if (!session.diagnostic_data) {
+            console.log("[Agent] Triggering raw backend models. Fetching diagnostic signals...");
+            session.diagnostic_data = await runDiagnosticEngine(session.image_url, session.coordinates);
+            session.status = 'evaluating_confidence';
+        }
+
+        isConfidenceEval = true;
 
         systemPromptAddition = `
-SYSTEM OVERRIDE: The user provided both the image and the location!
-The backend Diagnostic Engine has just finished running. Here are the results:
-- Suspected Disease: ${diagnosticResult.suspected_disease}
-- Environmental Factors: ${diagnosticResult.environmental_risk}
+[PHASE 3: CONFIDENCE-BASED DYNAMIC DIAGNOSIS]
+You are an Expert Agronomist communicating directly with a farmer.
+We have collected initial multi-modal data:
+--- VISUAL DIAGNOSIS (Mocked ResNet) ---
+- Suspected Disease: ${session.diagnostic_data.visual_diagnosis.suspected_disease}
+- Visual Cues: ${session.diagnostic_data.visual_diagnosis.visual_cues}
 
-Your task: Provide the Final Diagnosis, your contextual reasoning (bridging the visual and weather data), and 3 simple actionable remedies for the farmer. Keep it reassuring and clear.
+--- GEO-SPATIAL DATA ---
+Weather: ${session.diagnostic_data.geo_spatial_data.weather.temperature_c}°C, Humidity ${session.diagnostic_data.geo_spatial_data.weather.humidity_percent}%
+Soil Moisture: ${session.diagnostic_data.geo_spatial_data.soil_satellite_mock.soil_moisture_percent}%
+
+Previous Follow-up Questions Asked by you: ${session.question_count}
+Maximum Allowed Questions before forcing a best-guess diagnosis: 2
+
+YOUR TASK:
+Evaluate if this raw symptomatic and environmental data, combined with the farmer's chat history, is sufficient to make a confident diagnosis (> 85% confidence score).
+If confidence is < 85 AND you haven't asked 2 questions yet, output 'needs_more_info' and provide exactly 1-2 follow-up questions to gather more specific clues (e.g. usage of fertilizers, watering history, when it started).
+If confidence is >= 85 OR you have already asked 2 questions, output 'confident' and provide the final_diagnosis_draft.
+
+CRITICAL INSTRUCTION: You MUST format your ENTIRE output as a valid JSON object. Do not include markdown codeblocks (\`\`\`json) outside of the structure, just output raw JSON:
+{
+  "confidence_score": <number 0-100>,
+  "internal_reasoning": "<string explaining your logic>",
+  "status": "confident" | "needs_more_info",
+  "follow_up_questions": ["<question 1 in the EXACT SAME language the user used>"],
+  "final_diagnosis_draft": "<Markdown formatted final diagnosis in the EXACT SAME language the user used, empty if 'needs_more_info'>"
+}
 `;
-
-        // Reset slots if you want them to be able to submit a new crop scan later
-        // session.image_url = null;
-        // session.coordinates = null;
-        // session.status = 'gathering_info';
+    } else if (session.status === 'completed') {
+        systemPromptAddition = `The final diagnosis is complete. You are chatting friendly with the farmer. CRITICAL: Reply in the EXACT SAME language the farmer is using (Hindi, Gujarati, Marathi, Tamil, Telugu, etc.).`;
     } else {
         systemPromptAddition = `
 Current State:
 - Has user provided an image? ${session.image_url ? 'YES' : 'NO'}
 - Has user provided a location? ${session.coordinates ? 'YES' : 'NO'}
 
-Your task: Check the current state. If the user is missing an image, politely ask them to upload a photo of the crop. If they are missing a location, politely ask them to send a location pin. Acknowledge whatever they have just provided. Do NOT hallucinate a diagnosis until both are YES.
+Your task: Assess state. If missing image, ask for crop photo. If missing location, ask for location pin.
+CRITICAL LANGUAGE RULE: You MUST speak the EXACT SAME language the user is typing/speaking in (e.g., Gujarati, Hindi, Marathi, Tamil, Telugu, Kannada, Malayalam, Odia, Punjabi, Bengali, or English). Never force English unless they use English. Do NOT hallucinate a diagnosis until both are YES.
 `;
     }
 
@@ -96,61 +142,75 @@ ${systemPromptAddition}
 
     session.history.push({ role: 'user', content: inputContent });
 
-    // Keep only last 5 messages to avoid huge context costs
-    if (session.history.length > 5) {
-        session.history = session.history.slice(session.history.length - 5);
+    // Keep only last 5 messages
+    if (session.history.length > 6) {
+        session.history = session.history.slice(session.history.length - 6);
     }
 
-    // Format for Gemini API (contents array)
     const contents = session.history.map(msg => ({
         role: msg.role === 'model' ? 'model' : 'user',
         parts: [{ text: msg.content }]
     }));
 
-    // For safety, prepend the system prompt to the user's latest message
     const latestUserMsgIndex = contents.length - 1;
     contents[latestUserMsgIndex].parts[0].text = `[SYSTEM INSTRUCTION]\n${systemInstruction}\n\n[USER INPUT]\n${contents[latestUserMsgIndex].parts[0].text}`;
 
     console.log(`[Agent] Calling Gemini for session ${sessionId}...`);
     try {
         let aiResponseText = "";
+        let isFinalDiag = false;
 
-        // If they haven't put a Gemini Key in .env yet, fallback gracefully for testing
         if (!process.env.GEMINI_API_KEY) {
-            console.log("[Agent] No GEMINI_API_KEY found, returning mocked response based on state.");
-            if (diagnosticResult) {
-                aiResponseText = `*Mock AI Response*\n\nBased on your image and location (Lat ${session.coordinates.lat}), I've run the diagnostics.\n\nDiagnosis: ${diagnosticResult.suspected_disease}\nWeather Context: ${diagnosticResult.environmental_risk}\n\nRemedy:\n1. Ensure good drainage.\n2. Apply copper-based fungicide.\n3. Monitor daily.`;
-            } else if (!session.image_url) {
-                aiResponseText = `*Mock AI Response*\nCould you please provide an image of your crop?`;
-            } else if (!session.coordinates) {
-                aiResponseText = `*Mock AI Response*\nI received the image! Now, please share your location pin.`;
-            }
+            aiResponseText = "Missing Gemini key.";
         } else {
-            const chat = model.startChat({
-                history: contents.slice(0, -1), // Everything except the latest message
-            });
+            const chatConfig = { history: contents.slice(0, -1) };
+            
+            // Native JSON mode enforcement for Phase 3
+            if (isConfidenceEval) {
+                chatConfig.generationConfig = { responseMimeType: "application/json" };
+            }
 
+            const chat = model.startChat(chatConfig);
             const result = await chat.sendMessage(contents[latestUserMsgIndex].parts[0].text);
-            aiResponseText = result.response.text();
+            let rawText = result.response.text();
+
+            if (isConfidenceEval) {
+                // Parse JSON dynamically
+                let jsonResponse;
+                try {
+                    jsonResponse = JSON.parse(rawText);
+                    console.log(`[Agent] Dynamic Confidence Engine:`, Object.entries(jsonResponse).map(([k, v]) => `${k}:${typeof v === 'string' && v.length > 50 ? '"..."' : JSON.stringify(v)}`).join(', '));
+                    
+                    if (jsonResponse.status === 'confident' || session.question_count >= 2) {
+                        aiResponseText = jsonResponse.final_diagnosis_draft || "Based on the provided information, I have reached a conclusion.";
+                        session.status = 'completed';
+                        isFinalDiag = true;
+                    } else {
+                        // Fallback safely to prevent crashing if the array is missing or empty
+                        const questions = jsonResponse.follow_up_questions || [];
+                        aiResponseText = questions.length > 0 ? questions.join(' ') : "कृपया मुझे अपनी समस्या के बारे में और जानकारी दें।";
+                        session.question_count += 1;
+                    }
+                } catch (e) {
+                    console.error('[Agent] Failed to parse confidence JSON. Fallback to raw text.', rawText);
+                    aiResponseText = "मैंने आपकी जानकारी देख ली है, लेकिन मुझे थोड़ी और जानकारी चाहिए। क्या आप बता सकते हैं कि आपने आखिरी बार खेतों में क्या डाला था?";
+                    session.question_count += 1;
+                }
+            } else {
+                aiResponseText = rawText;
+            }
         }
 
-        // Add AI response to memory
+        // Add to history so AI remembers the actual question it asked
         session.history.push({ role: 'model', content: aiResponseText });
 
         return {
             text: aiResponseText,
-            diagnosticResult,
+            diagnosticResult: isFinalDiag ? session.diagnostic_data : null,
             state: session
         };
     } catch (error) {
         console.error('[Agent] Error calling LLM:', error);
-        if (error?.status === 404) {
-            console.error(`[Agent] Model '${GEMINI_MODEL}' is unavailable. Try GEMINI_MODEL=gemini-2.5-flash.`);
-        }
-        return {
-            text: "I'm having trouble analyzing that right now. Please try again in a moment.",
-            diagnosticResult: null,
-            state: session
-        };
+        return { text: "I'm having trouble analyzing that. Please try again.", diagnosticResult: null, state: session };
     }
 };
